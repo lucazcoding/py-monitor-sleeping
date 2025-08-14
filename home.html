@@ -1,383 +1,1961 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="pt-BR">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Monitoramento de Sono Real + Motivação e Piada</title>
-<style>
-  body {
-    font-family: Arial, sans-serif;
-    max-width: 600px;
-    margin: 30px auto;
-    padding: 0 20px;
-    background: #f0f4f8;
-    color: #333;
-  }
-  h1 {
-    text-align: center;
-    color: #004d99;
-  }
-  button {
-    font-size: 1.1rem;
-    padding: 10px 20px;
-    margin: 10px 5px 20px 5px;
-    cursor: pointer;
-    border: none;
-    border-radius: 6px;
-    background-color: #004d99;
-    color: white;
-    transition: background-color 0.3s;
-  }
-  button:disabled {
-    background-color: #888;
-    cursor: not-allowed;
-  }
-  #status {
-    font-weight: bold;
-    margin-bottom: 10px;
-  }
-  #chart {
-    width: 100%;
-    height: 150px;
-    background: white;
-    border: 1px solid #ccc;
-    border-radius: 8px;
-  }
-  #summary {
-    background: #d0e7ff;
-    padding: 15px;
-    border-radius: 8px;
-    margin-top: 20px;
-  }
-  #summary p {
-    margin: 8px 0;
-  }
-  #motivation {
-    font-style: italic;
-    margin-top: 15px;
-    color: #006600;
-  }
-  #joke {
-    margin-top: 15px;
-    font-weight: bold;
-    color: #990000;
-  }
-</style>
-</head>
-<body>
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Monitoramento de Sono Pro</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <link
+            rel="stylesheet"
+            href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+        />
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+        <style>
+            @import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap");
 
-<h1>Monitoramento de Sono Real</h1>
-
-<div id="status">Status: <span style="color:red;">Monitoramento parado</span></div>
-
-<button id="startBtn">Iniciar Monitoramento</button>
-<button id="stopBtn" disabled>Parar Monitoramento</button>
-
-<canvas id="chart"></canvas>
-
-<div id="summary" style="display:none;"></div>
-
-<script>
-(async () => {
-  const startBtn = document.getElementById('startBtn');
-  const stopBtn = document.getElementById('stopBtn');
-  const statusEl = document.getElementById('status');
-  const summaryEl = document.getElementById('summary');
-  const canvas = document.getElementById('chart');
-  const ctx = canvas.getContext('2d');
-
-  canvas.width = canvas.clientWidth;
-  canvas.height = canvas.clientHeight;
-
-  let monitoring = false;
-  let data = []; // { time: Date, movement: number, sound: number }
-  let startTime = null;
-  let endTime = null;
-
-  let audioContext;
-  let analyser;
-  let microphoneStream;
-
-  // Movimento
-  let lastAcceleration = 0;
-
-  function updateStatus(msg, color = 'black') {
-    statusEl.innerHTML = 'Status: <span style="color:' + color + ';">' + msg + '</span>';
-  }
-
-  function drawChart() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.lineWidth = 2;
-
-    ctx.fillStyle = '#555';
-    ctx.font = '12px Arial';
-    ctx.fillText('Movimento (azul)', 5, 15);
-    ctx.fillText('Som (laranja)', 5, 35);
-
-    if (data.length === 0) return;
-
-    const maxPoints = 60;
-    const slice = data.slice(-maxPoints);
-    const step = canvas.width / maxPoints;
-
-    // Movimento (azul)
-    ctx.strokeStyle = 'blue';
-    ctx.beginPath();
-    slice.forEach((d, i) => {
-      const y = canvas.height - d.movement * canvas.height;
-      const x = i * step;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
-
-    // Som (laranja)
-    ctx.strokeStyle = 'orange';
-    ctx.beginPath();
-    slice.forEach((d, i) => {
-      const y = canvas.height - d.sound * canvas.height;
-      const x = i * step;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
-  }
-
-  function calculateMovement(acceleration) {
-    const maxAccel = 30;
-    const norm = Math.min(Math.abs(acceleration) / maxAccel, 1);
-    return norm;
-  }
-
-  async function startAudio() {
-    audioContext = new AudioContext();
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      microphoneStream = stream;
-      const source = audioContext.createMediaStreamSource(stream);
-      analyser = audioContext.createAnalyser();
-      analyser.fftSize = 256;
-      source.connect(analyser);
-    } catch (e) {
-      alert('Erro ao acessar microfone: ' + e.message);
-      throw e;
-    }
-  }
-
-  function getSoundLevel() {
-    if (!analyser) return 0;
-    const dataArray = new Uint8Array(analyser.frequencyBinCount);
-    analyser.getByteFrequencyData(dataArray);
-    let values = 0;
-    for (let i = 0; i < dataArray.length; i++) {
-      values += dataArray[i];
-    }
-    const average = values / dataArray.length;
-    return average / 255;
-  }
-
-  function startMotion() {
-    return new Promise((resolve, reject) => {
-      if (typeof DeviceMotionEvent.requestPermission === 'function') {
-        DeviceMotionEvent.requestPermission()
-          .then(response => {
-            if (response === 'granted') {
-              window.addEventListener('devicemotion', motionHandler);
-              resolve();
-            } else {
-              reject(new Error('Permissão para acelerômetro negada'));
+            * {
+                font-family: "Inter", sans-serif;
             }
-          })
-          .catch(reject);
-      } else {
-        window.addEventListener('devicemotion', motionHandler);
-        resolve();
-      }
-    });
-  }
 
-  function stopMotion() {
-    window.removeEventListener('devicemotion', motionHandler);
-  }
+            .gradient-bg {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            }
 
-  function motionHandler(event) {
-    const acc = event.accelerationIncludingGravity;
-    if (!acc) return;
-    const totalAccel = Math.sqrt(
-      (acc.x || 0) ** 2 + (acc.y || 0) ** 2 + (acc.z || 0) ** 2
-    );
-    lastAcceleration = calculateMovement(totalAccel);
-  }
+            .glass-effect {
+                backdrop-filter: blur(10px);
+                background: rgba(255, 255, 255, 0.1);
+                border: 1px solid rgba(255, 255, 255, 0.2);
+            }
 
-  function isSleeping() {
-    if (data.length < 10) return false;
-    const last10 = data.slice(-10);
-    const lowMovementCount = last10.filter(d => d.movement < 0.2).length;
-    return lowMovementCount >= 8;
-  }
+            .modal-backdrop {
+                backdrop-filter: blur(5px);
+                background: rgba(0, 0, 0, 0.5);
+            }
 
-  function isMusicPresent() {
-    if (data.length < 10) return false;
-    const last10 = data.slice(-10);
-    const highSoundCount = last10.filter(d => d.sound > 0.6).length;
-    return highSoundCount >= 3;
-  }
+            .chart-container {
+                background: linear-gradient(145deg, #f8fafc, #e2e8f0);
+                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            }
 
-  function evaluateSleepQuality(durationHours, musicDetected) {
-    let quality = '';
-    if (durationHours < 4) quality = 'Péssimo';
-    else if (durationHours < 6) quality = 'Ruim';
-    else if (durationHours < 8) quality = 'Regular';
-    else if (durationHours < 9) quality = 'Bom';
-    else quality = 'Ótimo';
+            .btn-primary {
+                background: linear-gradient(45deg, #667eea, #764ba2);
+                transition: all 0.3s ease;
+                box-shadow: 0 4px 15px rgba(118, 75, 162, 0.3);
+            }
 
-    if (musicDetected && quality !== 'Péssimo' && quality !== 'Ruim') {
-      if (quality === 'Ótimo') quality = 'Bom';
-      else if (quality === 'Bom') quality = 'Regular';
-      else if (quality === 'Regular') quality = 'Ruim';
-    }
-    return quality;
-  }
+            .btn-primary:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 6px 20px rgba(118, 75, 162, 0.4);
+            }
 
-  function formatDateTime(date) {
-    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
-  }
+            .btn-secondary {
+                background: linear-gradient(45deg, #f093fb, #f5576c);
+                transition: all 0.3s ease;
+                box-shadow: 0 4px 15px rgba(245, 87, 108, 0.3);
+            }
 
-  async function fetchMotivation() {
-    try {
-      const res = await fetch('https://type.fit/api/quotes');
-      const quotes = await res.json();
-      if (!quotes.length) return "Tenha um ótimo dia!";
-      const randomIndex = Math.floor(Math.random() * quotes.length);
-      return quotes[randomIndex].text + (quotes[randomIndex].author ? ' — ' + quotes[randomIndex].author : '');
-    } catch {
-      return "Tenha um ótimo dia!";
-    }
-  }
+            .btn-secondary:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 6px 20px rgba(245, 87, 108, 0.4);
+            }
 
-  async function fetchJoke() {
-  try {
-    const res = await fetch('https://www.piadas.net/api/piadas/random');
-    const data = await res.json();
-    // A API retorna um array com objetos contendo 'piada' em texto
-    if (data && data.length > 0 && data[0].piada) {
-      return data[0].piada;
-    } else {
-      return "Por que o computador foi ao médico? Porque estava com vírus!";
-    }
-  } catch {
-    return "Por que o computador foi ao médico? Porque estava com vírus!";
-  }
-}
+            .btn-success {
+                background: linear-gradient(45deg, #4facfe, #00f2fe);
+                transition: all 0.3s ease;
+                box-shadow: 0 4px 15px rgba(79, 172, 254, 0.3);
+            }
 
-  async function startMonitoring() {
-    if (monitoring) return;
-    monitoring = true;
-    data = [];
-    startTime = new Date();
-    endTime = null;
-    summaryEl.style.display = 'none';
+            .btn-success:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 6px 20px rgba(79, 172, 254, 0.4);
+            }
 
-    updateStatus('Solicitando permissões...', 'orange');
-    startBtn.disabled = true;
-    stopBtn.disabled = true;
+            .pulse-animation {
+                animation: pulse 2s infinite;
+            }
 
-    try {
-      await startAudio();
-      await startMotion();
-    } catch (err) {
-      updateStatus('Permissões negadas ou erro: ' + err.message, 'red');
-      startBtn.disabled = false;
-      stopBtn.disabled = true;
-      monitoring = false;
-      return;
-    }
+            @keyframes pulse {
+                0%,
+                100% {
+                    opacity: 1;
+                }
+                50% {
+                    opacity: 0.5;
+                }
+            }
 
-    updateStatus('Monitoramento ativo', 'green');
-    startBtn.disabled = true;
-    stopBtn.disabled = false;
+            .slide-in {
+                animation: slideIn 0.3s ease-out;
+            }
 
-    intervalId = setInterval(() => {
-      const movement = lastAcceleration || 0;
-      const sound = getSoundLevel();
-      data.push({ time: new Date(), movement, sound });
-      drawChart();
+            @keyframes slideIn {
+                from {
+                    transform: translateY(-50px);
+                    opacity: 0;
+                }
+                to {
+                    transform: translateY(0);
+                    opacity: 1;
+                }
+            }
 
-      if (isSleeping()) updateStatus('Usuário provavelmente dormindo', 'green');
-      else updateStatus('Usuário ativo', 'orange');
+            .fade-in {
+                animation: fadeIn 0.5s ease-in;
+            }
 
-      if (isMusicPresent()) updateStatus('Música detectada no ambiente', 'blue');
+            @keyframes fadeIn {
+                from {
+                    opacity: 0;
+                }
+                to {
+                    opacity: 1;
+                }
+            }
 
-    }, 5000);
-  }
+            .status-indicator {
+                width: 12px;
+                height: 12px;
+                border-radius: 50%;
+                display: inline-block;
+                margin-right: 8px;
+            }
 
-  async function stopMonitoring() {
-    if (!monitoring) return;
-    monitoring = false;
-    endTime = new Date();
+            .status-active {
+                background: #10b981;
+            }
+            .status-sleeping {
+                background: #3b82f6;
+            }
+            .status-stopped {
+                background: #ef4444;
+            }
+            .status-music {
+                background: #f59e0b;
+            }
 
-    clearInterval(intervalId);
-    stopMotion();
+            #chart {
+                border-radius: 12px;
+                box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+            }
+        </style>
+    </head>
+    <body class="min-h-screen gradient-bg">
+        <div class="container mx-auto px-4 py-8 max-w-4xl">
+            <!-- Header -->
+            <div class="text-center mb-8">
+                <h1 class="text-4xl font-bold text-white mb-2 slide-in">
+                    <i class="fas fa-moon mr-3"></i>Monitoramento de Sono Pro
+                </h1>
+                <p class="text-white/80 text-lg">
+                    Monitore sua qualidade de sono em tempo real
+                </p>
+            </div>
 
-    if (microphoneStream) {
-      microphoneStream.getTracks().forEach(track => track.stop());
-      microphoneStream = null;
-    }
-    if (audioContext) {
-      await audioContext.close();
-      audioContext = null;
-      analyser = null;
-    }
+            <!-- Navigation Tabs -->
+            <div class="glass-effect rounded-2xl p-4 mb-6 fade-in">
+                <div class="flex space-x-1 bg-white/10 rounded-lg p-1">
+                    <button id="monitoringTab" class="flex-1 py-2 px-4 text-sm rounded transition-all duration-200 bg-white/20 text-white font-medium">
+                        <i class="fas fa-chart-line mr-2"></i>Monitoramento
+                    </button>
+                    <button id="reportsTab" class="flex-1 py-2 px-4 text-sm rounded transition-all duration-200 text-white/70">
+                        <i class="fas fa-file-medical mr-2"></i>Relatórios
+                    </button>
+                </div>
+            </div>
 
-    updateStatus('Monitoramento parado', 'red');
-    startBtn.disabled = false;
-    stopBtn.disabled = true;
+            <!-- Monitoring Panel -->
+            <div id="monitoringPanel" class="glass-effect rounded-2xl p-6 mb-6 fade-in">
+                <!-- Status Section -->
+                <div class="mb-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <div class="flex items-center">
+                            <span
+                                class="status-indicator status-stopped"
+                                id="statusIndicator"
+                            ></span>
+                            <span
+                                class="text-white font-semibold text-lg"
+                                id="status"
+                                >Monitoramento parado</span
+                            >
+                        </div>
+                        <div
+                            class="text-white/60 text-sm"
+                            id="currentTime"
+                        ></div>
+                    </div>
+                </div>
 
-    if (data.length === 0) {
-      summaryEl.innerHTML = '<p>Nenhum dado coletado.</p>';
-      summaryEl.style.display = 'block';
-      return;
-    }
+                <!-- Control Buttons -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                    <div class="space-y-3">
+                        <button
+                            id="startBtn"
+                            class="w-full btn-primary text-white font-semibold py-3 px-6 rounded-xl border-0 cursor-pointer"
+                        >
+                            <i class="fas fa-play mr-2"></i>Iniciar
+                            Monitoramento
+                        </button>
+                        <button
+                            id="stopBtn"
+                            class="w-full btn-secondary text-white font-semibold py-3 px-6 rounded-xl border-0 cursor-pointer opacity-50"
+                            disabled
+                        >
+                            <i class="fas fa-stop mr-2"></i>Parar Monitoramento
+                        </button>
+                    </div>
 
-    let sleepStartIndex = data.findIndex((d, i) => {
-      if (i + 9 >= data.length) return false;
-      const slice = data.slice(i, i + 10);
-      return slice.filter(x => x.movement < 0.2).length >= 8;
-    });
-    if (sleepStartIndex === -1) sleepStartIndex = 0;
+                    <!-- Wake Time Setting -->
+                    <div class="space-y-3">
+                        <div class="bg-white/10 rounded-xl p-4">
+                            <label
+                                class="block text-white/80 text-sm font-medium mb-3"
+                            >
+                                <i class="fas fa-alarm-clock mr-2"></i>Configurar Alarme
+                            </label>
+                            
+                            <!-- Toggle between modes -->
+                            <div class="flex mb-3 bg-white/10 rounded-lg p-1">
+                                <button
+                                    id="timeMode"
+                                    class="flex-1 py-1 px-2 text-xs rounded transition-all duration-200 bg-white/20 text-white font-medium"
+                                >
+                                    Horário Fixo
+                                </button>
+                                <button
+                                    id="durationMode"
+                                    class="flex-1 py-1 px-2 text-xs rounded transition-all duration-200 text-white/70"
+                                >
+                                    Duração
+                                </button>
+                            </div>
 
-    const sleepStartTime = data[sleepStartIndex].time;
-    const sleepDurationMs = endTime - sleepStartTime;
-    const durationHours = sleepDurationMs / (1000 * 60 * 60);
+                            <!-- Time Mode -->
+                            <div id="timeModePanel">
+                                <input
+                                    type="time"
+                                    id="wakeTimeInput"
+                                    class="w-full bg-white/20 text-white rounded-lg px-3 py-2 border border-white/30 focus:border-white/60 focus:outline-none"
+                                />
+                            </div>
 
-    const musicDuringSleep = data.slice(sleepStartIndex).some(d => d.sound > 0.6);
-    const sleepQuality = evaluateSleepQuality(durationHours, musicDuringSleep);
+                            <!-- Duration Mode -->
+                            <div id="durationModePanel" class="hidden space-y-2">
+                                <div class="flex space-x-2">
+                                    <div class="flex-1">
+                                        <label class="block text-white/60 text-xs mb-1">Horas</label>
+                                        <input
+                                            type="number"
+                                            id="hoursInput"
+                                            min="0"
+                                            max="23"
+                                            value="8"
+                                            class="w-full bg-white/20 text-white rounded-lg px-3 py-2 border border-white/30 focus:border-white/60 focus:outline-none text-center"
+                                        />
+                                    </div>
+                                    <div class="flex-1">
+                                        <label class="block text-white/60 text-xs mb-1">Minutos</label>
+                                        <input
+                                            type="number"
+                                            id="minutesInput"
+                                            min="0"
+                                            max="59"
+                                            value="0"
+                                            class="w-full bg-white/20 text-white rounded-lg px-3 py-2 border border-white/30 focus:border-white/60 focus:outline-none text-center"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div
+                            class="text-white/60 text-xs text-center"
+                            id="wakeTimeStatus"
+                        >
+                            Nenhum alarme definido
+                        </div>
+                        <div
+                            class="text-white/40 text-xs text-center hidden"
+                            id="wakeTimePreview"
+                        >
+                        </div>
+                    </div>
+                </div>
 
-    // Busca motivação e piada em paralelo
-    const [motivation, joke] = await Promise.all([fetchMotivation(), fetchJoke()]);
+                <!-- Chart Section -->
+                <div class="chart-container rounded-xl p-4 mb-6">
+                    <div class="flex justify-between items-center mb-3">
+                        <h3 class="text-gray-700 font-semibold">
+                            Gráfico em Tempo Real
+                        </h3>
+                        <div class="flex space-x-4 text-sm">
+                            <div class="flex items-center">
+                                <div
+                                    class="w-3 h-3 bg-blue-500 rounded mr-2"
+                                ></div>
+                                <span class="text-gray-600">Movimento</span>
+                            </div>
+                            <div class="flex items-center">
+                                <div
+                                    class="w-3 h-3 bg-orange-500 rounded mr-2"
+                                ></div>
+                                <span class="text-gray-600">Som</span>
+                            </div>
+                        </div>
+                    </div>
+                    <canvas
+                        id="chart"
+                        class="w-full"
+                        style="height: 200px"
+                    ></canvas>
+                </div>
 
-    summaryEl.innerHTML = `
-      <p><strong>Início estimado do sono:</strong> ${formatDateTime(sleepStartTime)}</p>
-      <p><strong>Fim do monitoramento:</strong> ${formatDateTime(endTime)}</p>
-      <p><strong>Duração estimada do sono:</strong> ${durationHours.toFixed(2)} horas</p>
-      <p><strong>Música detectada durante o sono:</strong> ${musicDuringSleep ? 'Sim' : 'Não'}</p>
-      <p><strong>Qualidade do sono:</strong> ${sleepQuality}</p>
-      <p><strong>Dicas:</strong></p>
-      <ul>
-        <li>Evite música alta durante o sono para melhorar a qualidade.</li>
-        <li>Mantenha o ambiente silencioso e escuro.</li>
-        <li>Se movimente menos para facilitar um sono profundo.</li>
-        <li>Tente dormir pelo menos 7-8 horas por noite.</li>
-      </ul>
-      <p><strong>Lembre-se:</strong><br><em>${motivation}</em></p>
-      <p><strong>Resenha do dia:</strong><br>${joke}</p>
-    `;
-    summaryEl.style.display = 'block';
-  }
+                <!-- API Buttons -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <button
+                        id="motivationBtn"
+                        class="btn-success text-white font-semibold py-3 px-6 rounded-xl border-0 cursor-pointer"
+                    >
+                        <i class="fas fa-heart mr-2"></i>Mensagem Motivacional
+                    </button>
+                    <button
+                        id="jokeBtn"
+                        class="btn-secondary text-white font-semibold py-3 px-6 rounded-xl border-0 cursor-pointer"
+                    >
+                        <i class="fas fa-laugh mr-2"></i>Piada do Dia
+                    </button>
+                </div>
+            </div>
 
-  let intervalId = null;
+            <!-- Reports Panel -->
+            <div id="reportsPanel" class="glass-effect rounded-2xl p-6 mb-6 fade-in hidden">
+                <div class="space-y-6">
+                    <!-- Reports Header -->
+                    <div class="text-center">
+                        <h2 class="text-2xl font-bold text-white mb-2">
+                            <i class="fas fa-file-medical mr-2"></i>Relatórios Médicos
+                        </h2>
+                        <p class="text-white/80">Gerencie e baixe relatórios detalhados do seu sono</p>
+                    </div>
 
-  startBtn.addEventListener('click', startMonitoring);
-  stopBtn.addEventListener('click', stopMonitoring);
-})();
-</script>
+                    <!-- Saved Reports -->
+                    <div class="bg-white/10 rounded-xl p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="text-white font-semibold">
+                                <i class="fas fa-history mr-2"></i>Relatórios Salvos
+                            </h3>
+                            <button id="refreshReportsBtn" class="text-white/70 hover:text-white text-sm">
+                                <i class="fas fa-sync-alt mr-1"></i>Atualizar
+                            </button>
+                        </div>
+                        
+                        <!-- Date Filter -->
+                        <div class="mb-4">
+                            <label class="block text-white/80 text-sm mb-2">
+                                <i class="fas fa-filter mr-1"></i>Filtrar por Data
+                            </label>
+                            <div class="flex space-x-2">
+                                <input type="date" id="filterDate" value="" class="flex-1 bg-white/20 text-white rounded-lg px-3 py-2 border border-white/30" placeholder="Selecione uma data">
+                                <button id="clearFilterBtn" class="bg-white/10 text-white/70 hover:text-white hover:bg-white/20 rounded-lg px-3 py-2 border border-white/30">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div id="savedReportsList" class="space-y-2 max-h-60 overflow-y-auto">
+                            <p class="text-white/60 text-sm">Nenhum relatório salvo ainda</p>
+                        </div>
+                    </div>
+
+                    <!-- Statistics Overview -->
+                    <div class="bg-white/10 rounded-xl p-4">
+                        <h3 class="text-white font-semibold mb-3">
+                            <i class="fas fa-chart-bar mr-2"></i>Estatísticas Gerais
+                        </h3>
+                        <div id="statsOverview" class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <div class="text-center">
+                                <div class="text-2xl font-bold text-blue-300" id="totalSessions">0</div>
+                                <div class="text-white/60 text-sm">Sessões</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-2xl font-bold text-green-300" id="avgDuration">0h</div>
+                                <div class="text-white/60 text-sm">Duração Média</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-2xl font-bold text-orange-300" id="avgQuality">-</div>
+                                <div class="text-white/60 text-sm">Qualidade Média</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-2xl font-bold text-purple-300" id="lastSession">-</div>
+                                <div class="text-white/60 text-sm">Última Sessão</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Motivation Modal -->
+        <div
+            id="motivationModal"
+            class="fixed inset-0 modal-backdrop z-50 hidden items-center justify-center p-4"
+        >
+            <div class="bg-white rounded-2xl p-6 max-w-md w-full slide-in">
+                <div class="text-center">
+                    <div
+                        class="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4"
+                    >
+                        <i class="fas fa-heart text-green-600 text-2xl"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold text-gray-800 mb-4">
+                        Mensagem Motivacional
+                    </h3>
+                    <div
+                        id="motivationContent"
+                        class="text-gray-600 mb-6 leading-relaxed"
+                    ></div>
+                    <button
+                        id="closeMotivationBtn"
+                        class="btn-primary text-white font-semibold py-2 px-6 rounded-lg border-0 cursor-pointer"
+                    >
+                        Fechar
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Joke Modal -->
+        <div
+            id="jokeModal"
+            class="fixed inset-0 modal-backdrop z-50 hidden items-center justify-center p-4"
+        >
+            <div class="bg-white rounded-2xl p-6 max-w-md w-full slide-in">
+                <div class="text-center">
+                    <div
+                        class="w-16 h-16 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4"
+                    >
+                        <i class="fas fa-laugh text-yellow-600 text-2xl"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold text-gray-800 mb-4">
+                        Piada do Dia
+                    </h3>
+                    <div
+                        id="jokeContent"
+                        class="text-gray-600 mb-6 leading-relaxed"
+                    ></div>
+                    <button
+                        id="closeJokeBtn"
+                        class="btn-secondary text-white font-semibold py-2 px-6 rounded-lg border-0 cursor-pointer"
+                    >
+                        Fechar
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Summary Modal -->
+        <div
+            id="summaryModal"
+            class="fixed inset-0 modal-backdrop z-50 hidden items-center justify-center p-4"
+        >
+            <div
+                class="bg-white rounded-2xl p-6 max-w-2xl w-full slide-in max-h-96 overflow-y-auto"
+            >
+                <div class="text-center mb-6">
+                    <div
+                        class="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4"
+                    >
+                        <i class="fas fa-chart-line text-blue-600 text-2xl"></i>
+                    </div>
+                    <h3 class="text-2xl font-semibold text-gray-800">
+                        Resumo do Sono
+                    </h3>
+                </div>
+                <div id="summaryContent" class="space-y-4"></div>
+                <div class="text-center mt-6">
+                    <button
+                        id="closeSummaryBtn"
+                        class="btn-primary text-white font-semibold py-3 px-6 rounded-lg border-0 cursor-pointer"
+                    >
+                        Fechar Resumo
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            (async () => {
+                // DOM Elements
+                const startBtn = document.getElementById("startBtn");
+                const stopBtn = document.getElementById("stopBtn");
+                const statusEl = document.getElementById("status");
+                const statusIndicator =
+                    document.getElementById("statusIndicator");
+                const currentTimeEl = document.getElementById("currentTime");
+                const wakeTimeInput = document.getElementById("wakeTimeInput");
+                const wakeTimeStatus =
+                    document.getElementById("wakeTimeStatus");
+                const wakeTimePreview = document.getElementById("wakeTimePreview");
+                const timeModeBtn = document.getElementById("timeMode");
+                const durationModeBtn = document.getElementById("durationMode");
+                const timeModePanel = document.getElementById("timeModePanel");
+                const durationModePanel = document.getElementById("durationModePanel");
+                const hoursInput = document.getElementById("hoursInput");
+                const minutesInput = document.getElementById("minutesInput");
+                const canvas = document.getElementById("chart");
+                
+                // Tabs and panels
+                const monitoringTab = document.getElementById("monitoringTab");
+                const reportsTab = document.getElementById("reportsTab");
+                const monitoringPanel = document.getElementById("monitoringPanel");
+                const reportsPanel = document.getElementById("reportsPanel");
+                
+                // Reports elements
+                const savedReportsList = document.getElementById("savedReportsList");
+                const filterDate = document.getElementById("filterDate");
+                const refreshReportsBtn = document.getElementById("refreshReportsBtn");
+                const clearFilterBtn = document.getElementById("clearFilterBtn");
+                const totalSessions = document.getElementById("totalSessions");
+                const avgDuration = document.getElementById("avgDuration");
+                const avgQuality = document.getElementById("avgQuality");
+                const lastSession = document.getElementById("lastSession");
+                const ctx = canvas.getContext("2d");
+
+                // Modal elements
+                const motivationBtn = document.getElementById("motivationBtn");
+                const jokeBtn = document.getElementById("jokeBtn");
+                const motivationModal =
+                    document.getElementById("motivationModal");
+                const jokeModal = document.getElementById("jokeModal");
+                const summaryModal = document.getElementById("summaryModal");
+                const motivationContent =
+                    document.getElementById("motivationContent");
+                const jokeContent = document.getElementById("jokeContent");
+                const summaryContent =
+                    document.getElementById("summaryContent");
+                const closeMotivationBtn =
+                    document.getElementById("closeMotivationBtn");
+                const closeJokeBtn = document.getElementById("closeJokeBtn");
+                const closeSummaryBtn =
+                    document.getElementById("closeSummaryBtn");
+
+                // Variables
+                let monitoring = false;
+                let data = [];
+                let startTime = null;
+                let endTime = null;
+                let intervalId = null;
+                let wakeTimeInterval = null;
+                let animationFrameId = null;
+                let audioContext;
+                let analyser;
+                let microphoneStream;
+                let lastAcceleration = 0;
+                let alarmMode = "time"; // "time" or "duration"
+                let calculatedWakeTime = null;
+                let currentTab = "monitoring"; // "monitoring" or "reports"
+                let sleepReports = JSON.parse(localStorage.getItem('sleepReports') || '[]');
+
+                // Initialize canvas
+                function resizeCanvas() {
+                    canvas.width = canvas.clientWidth;
+                    canvas.height = 200;
+                }
+                resizeCanvas();
+                window.addEventListener("resize", resizeCanvas);
+
+                // Update current time
+                function updateCurrentTime() {
+                    currentTimeEl.textContent = new Date().toLocaleTimeString();
+                }
+                setInterval(updateCurrentTime, 1000);
+                updateCurrentTime();
+
+                // Status management with visual indicators
+                function updateStatus(msg, type = "stopped") {
+                    statusEl.textContent = msg;
+                    statusIndicator.className = `status-indicator status-${type}`;
+
+                    if (type === "active") {
+                        statusIndicator.classList.add("pulse-animation");
+                    } else {
+                        statusIndicator.classList.remove("pulse-animation");
+                    }
+                }
+
+                // Enhanced chart drawing with better visualization and zoom
+                function drawChart() {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                    if (data.length === 0) {
+                        ctx.fillStyle = "#6b7280";
+                        ctx.font = "16px Inter";
+                        ctx.textAlign = "center";
+                        ctx.textBaseline = "middle";
+                        ctx.fillText(
+                            "Aguardando dados do monitoramento...",
+                            canvas.width / 2,
+                            canvas.height / 2,
+                        );
+                        return;
+                    }
+
+                    const maxPoints = 150; // More points for smoother real-time visualization
+                    const slice = data.slice(-maxPoints);
+                    const step = canvas.width / Math.max(maxPoints - 1, 1);
+                    const padding = 20;
+                    const chartHeight = canvas.height - padding * 2;
+
+                    // Background gradient
+                    const gradient = ctx.createLinearGradient(
+                        0,
+                        0,
+                        0,
+                        canvas.height,
+                    );
+                    gradient.addColorStop(0, "#f8fafc");
+                    gradient.addColorStop(1, "#e2e8f0");
+                    ctx.fillStyle = gradient;
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                    // Draw grid with better styling
+                    ctx.strokeStyle = "#cbd5e1";
+                    ctx.lineWidth = 1;
+                    ctx.setLineDash([2, 3]);
+
+                    // Horizontal grid lines (5 levels with zoom effect)
+                    for (let i = 0; i <= 4; i++) {
+                        const y = padding + (chartHeight / 4) * i;
+                        ctx.beginPath();
+                        ctx.moveTo(0, y);
+                        ctx.lineTo(canvas.width, y);
+                        ctx.stroke();
+                    }
+
+                    // Vertical grid lines
+                    const gridVerticalCount = 10;
+                    for (let i = 0; i <= gridVerticalCount; i++) {
+                        const x = (canvas.width / gridVerticalCount) * i;
+                        ctx.beginPath();
+                        ctx.moveTo(x, padding);
+                        ctx.lineTo(x, canvas.height - padding);
+                        ctx.stroke();
+                    }
+
+                    ctx.setLineDash([]);
+
+                    // Enhanced zoom: amplify small values for better visibility (without adding fake data)
+                    const amplifyValue = (value) => {
+                        if (value === 0) return 0; // Manter zero como zero
+                        // Apply logarithmic scaling for better small value visibility
+                        return Math.pow(value * 4, 0.6); // Amplificação maior para valores pequenos reais
+                    };
+
+                    // Draw movement area (filled)
+                    ctx.fillStyle = "rgba(59, 130, 246, 0.2)";
+                    ctx.beginPath();
+                    ctx.moveTo(0, canvas.height - padding);
+                    slice.forEach((d, i) => {
+                        const amplified = Math.min(amplifyValue(d.movement), 1);
+                        const y =
+                            canvas.height - padding - amplified * chartHeight;
+                        const x = i * step;
+                        ctx.lineTo(x, y);
+                    });
+                    ctx.lineTo(
+                        (slice.length - 1) * step,
+                        canvas.height - padding,
+                    );
+                    ctx.closePath();
+                    ctx.fill();
+
+                    // Draw sound area (filled)
+                    ctx.fillStyle = "rgba(245, 158, 11, 0.2)";
+                    ctx.beginPath();
+                    ctx.moveTo(0, canvas.height - padding);
+                    slice.forEach((d, i) => {
+                        const amplified = Math.min(amplifyValue(d.sound), 1);
+                        const y =
+                            canvas.height - padding - amplified * chartHeight;
+                        const x = i * step;
+                        ctx.lineTo(x, y);
+                    });
+                    ctx.lineTo(
+                        (slice.length - 1) * step,
+                        canvas.height - padding,
+                    );
+                    ctx.closePath();
+                    ctx.fill();
+
+                    // Draw movement line (enhanced) - sempre desenha linha mesmo com valor zero
+                    ctx.strokeStyle = "#2563eb";
+                    ctx.lineWidth = 3;
+                    ctx.lineCap = "round";
+                    ctx.lineJoin = "round";
+                    ctx.beginPath();
+                    slice.forEach((d, i) => {
+                        const amplified = Math.min(amplifyValue(d.movement), 1);
+                        const y = canvas.height - padding - amplified * chartHeight;
+                        const x = i * step;
+                        if (i === 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                    });
+                    ctx.stroke();
+
+                    // Draw sound line (enhanced) - sempre desenha linha mesmo com valor zero
+                    ctx.strokeStyle = "#d97706";
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    slice.forEach((d, i) => {
+                        const amplified = Math.min(amplifyValue(d.sound), 1);
+                        const y = canvas.height - padding - amplified * chartHeight;
+                        const x = i * step;
+                        if (i === 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                    });
+                    ctx.stroke();
+
+                    // Draw data points for recent values
+                    if (slice.length > 0) {
+                        const recent = slice.slice(-5); // Last 5 points
+                        recent.forEach((d, i) => {
+                            const actualIndex = slice.length - 5 + i;
+                            if (actualIndex < 0) return;
+
+                            const x = actualIndex * step;
+
+                            // Movement point
+                            const amplifiedMovement = Math.min(
+                                amplifyValue(d.movement),
+                                1,
+                            );
+                            const yMovement =
+                                canvas.height -
+                                padding -
+                                amplifiedMovement * chartHeight;
+                            ctx.fillStyle = "#1d4ed8";
+                            ctx.beginPath();
+                            ctx.arc(x, yMovement, 4, 0, 2 * Math.PI);
+                            ctx.fill();
+
+                            // Sound point
+                            const amplifiedSound = Math.min(
+                                amplifyValue(d.sound),
+                                1,
+                            );
+                            const ySound =
+                                canvas.height -
+                                padding -
+                                amplifiedSound * chartHeight;
+                            ctx.fillStyle = "#b45309";
+                            ctx.beginPath();
+                            ctx.arc(x, ySound, 4, 0, 2 * Math.PI);
+                            ctx.fill();
+                        });
+                    }
+
+                    // Labels with better positioning
+                    ctx.fillStyle = "#374151";
+                    ctx.font = "12px Inter";
+                    ctx.textAlign = "left";
+                    ctx.textBaseline = "top";
+                    ctx.fillText("Alta atividade", 10, 10);
+                    ctx.textBaseline = "bottom";
+                    ctx.fillText("Baixa atividade", 10, canvas.height - 5);
+                }
+
+                function calculateMovement(acceleration) {
+                    // Reduzir threshold para melhor detecção de movimentos pequenos
+                    const maxAccel = 15; // Reduzido de 30 para 15 para maior sensibilidade
+                    const movement = Math.min(Math.abs(acceleration) / maxAccel, 1);
+                    
+                    // Aplicar amplificação para movimentos pequenos
+                    return Math.pow(movement, 0.7); // Raiz cúbica para amplificar valores pequenos
+                }
+
+                async function startAudio() {
+                    try {
+                        console.log("Solicitando acesso ao microfone...");
+                        
+                        const stream = await navigator.mediaDevices.getUserMedia({
+                            audio: true, // Simplificado para máxima compatibilidade
+                        });
+                        
+                        console.log("Microfone acessado com sucesso!");
+                        microphoneStream = stream;
+                        
+                        // Criar contexto de áudio de forma não-bloqueante
+                        console.log("Criando AudioContext...");
+                        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                        console.log("AudioContext criado, estado:", audioContext.state, "sample rate:", audioContext.sampleRate);
+                        
+                        // Pular o resume se estiver suspenso - fazer depois
+                        console.log("Configurando análise de áudio...");
+                        
+                        const source = audioContext.createMediaStreamSource(stream);
+                        console.log("MediaStreamSource criado");
+
+                        analyser = audioContext.createAnalyser();
+                        // Configurações mais básicas
+                        analyser.fftSize = 256; // Muito pequeno para máxima compatibilidade
+                        analyser.minDecibels = -80; 
+                        analyser.maxDecibels = -10;
+                        analyser.smoothingTimeConstant = 0.5;
+                        
+                        console.log("Analyser criado com fftSize:", analyser.fftSize);
+
+                        // Conectar diretamente sem gain node primeiro
+                        source.connect(analyser);
+                        console.log("Fonte conectada ao analyser");
+                        
+                        // Tentar resumir contexto de forma não-bloqueante
+                        if (audioContext.state === 'suspended') {
+                            console.log("Tentando resumir AudioContext de forma assíncrona...");
+                            audioContext.resume().then(() => {
+                                console.log("AudioContext resumido com sucesso!");
+                            }).catch(err => {
+                                console.log("Não foi possível resumir, mas continuando:", err.message);
+                            });
+                        }
+                        
+                        console.log("✓ Configuração de áudio concluída!");
+                        
+                        // Teste depois de um delay
+                        setTimeout(() => {
+                            console.log("Estado final do AudioContext:", audioContext.state);
+                            const testLevel = getSoundLevel();
+                            console.log("Teste de som:", testLevel);
+                        }, 1000);
+                        
+                    } catch (e) {
+                        console.error("Erro detalhado ao configurar áudio:", e);
+                        throw new Error("Erro ao acessar microfone: " + e.message);
+                    }
+                }
+
+                function getSoundLevel() {
+                    if (!analyser) {
+                        console.log("Analyser não disponível");
+                        return 0;
+                    }
+                    
+                    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+                    analyser.getByteFrequencyData(dataArray);
+
+                    let sum = 0;
+                    let peak = 0;
+                    let totalSum = 0;
+
+                    // Usar todo o espectro de frequência em vez de apenas voz
+                    for (let i = 0; i < dataArray.length; i++) {
+                        const value = dataArray[i];
+                        totalSum += value;
+                        sum += value;
+                        if (value > peak) peak = value;
+                    }
+
+                    const average = sum / dataArray.length;
+                    const normalizedAverage = average / 255;
+                    const normalizedPeak = peak / 255;
+
+                    // Amplificação mais agressiva para detectar sons baixos
+                    const sensitivity = 5.0; // Aumentado de 2.5 para 5.0
+                    const combined = (normalizedAverage * 0.8 + normalizedPeak * 0.2) * sensitivity;
+
+                    const result = Math.min(combined, 1);
+                    
+                    // Log para debug (remover depois)
+                    if (result > 0.01) {
+                        console.log(`Som detectado: ${result.toFixed(3)}, Peak: ${peak}, Avg: ${average.toFixed(1)}`);
+                    }
+
+                    return result;
+                }
+
+                function startMotion() {
+                    return new Promise((resolve, reject) => {
+                        if (
+                            typeof DeviceMotionEvent.requestPermission ===
+                            "function"
+                        ) {
+                            DeviceMotionEvent.requestPermission()
+                                .then((response) => {
+                                    if (response === "granted") {
+                                        window.addEventListener(
+                                            "devicemotion",
+                                            motionHandler,
+                                        );
+                                        resolve();
+                                    } else {
+                                        reject(
+                                            new Error(
+                                                "Permissão para acelerômetro negada",
+                                            ),
+                                        );
+                                    }
+                                })
+                                .catch(reject);
+                        } else {
+                            window.addEventListener(
+                                "devicemotion",
+                                motionHandler,
+                            );
+                            resolve();
+                        }
+                    });
+                }
+
+                function stopMotion() {
+                    window.removeEventListener("devicemotion", motionHandler);
+                }
+
+                function motionHandler(event) {
+                    const acc = event.accelerationIncludingGravity;
+                    if (!acc) return;
+                    
+                    // Calcular aceleração total com filtro de gravidade
+                    const totalAccel = Math.sqrt(
+                        (acc.x || 0) ** 2 +
+                            (acc.y || 0) ** 2 +
+                            (acc.z || 0) ** 2,
+                    );
+                    
+                    // Remover aproximadamente a gravidade (9.8 m/s²) para detectar movimento real
+                    const filteredAccel = Math.max(0, totalAccel - 9.8);
+                    
+                    lastAcceleration = calculateMovement(filteredAccel);
+                }
+
+                function isSleeping() {
+                    if (data.length < 10) return false;
+                    const last10 = data.slice(-10);
+                    return last10.filter((d) => d.movement < 0.2).length >= 8;
+                }
+
+                function isMusicPresent() {
+                    if (data.length < 10) return false;
+                    const last10 = data.slice(-10);
+                    return last10.filter((d) => d.sound > 0.6).length >= 3;
+                }
+
+                function evaluateSleepQuality(durationHours, musicDetected) {
+                    let quality = "";
+                    if (durationHours < 4) quality = "Péssimo";
+                    else if (durationHours < 6) quality = "Ruim";
+                    else if (durationHours < 8) quality = "Regular";
+                    else if (durationHours < 9) quality = "Bom";
+                    else quality = "Ótimo";
+
+                    if (
+                        musicDetected &&
+                        quality !== "Péssimo" &&
+                        quality !== "Ruim"
+                    ) {
+                        if (quality === "Ótimo") quality = "Bom";
+                        else if (quality === "Bom") quality = "Regular";
+                        else if (quality === "Regular") quality = "Ruim";
+                    }
+                    return quality;
+                }
+
+                // Enhanced API functions with better error handling
+                async function fetchMotivation() {
+                    try {
+                        const controller = new AbortController();
+                        const timeoutId = setTimeout(
+                            () => controller.abort(),
+                            5000,
+                        );
+
+                        const res = await fetch(
+                            "https://quote-generator-api-six.vercel.app/api/quotes/random",
+                            {
+                                signal: controller.signal,
+                                headers: {
+                                    Accept: "application/json",
+                                    "Content-Type": "application/json",
+                                },
+                            },
+                        );
+
+                        clearTimeout(timeoutId);
+
+                        if (!res.ok) {
+                            throw new Error(
+                                `HTTP ${res.status}: ${res.statusText}`,
+                            );
+                        }
+
+                        const data = await res.json();
+
+                        if (!data || !data.quote) {
+                            throw new Error("Dados inválidos da API");
+                        }
+
+                        // Traduzir a citação para português
+                        const translatedQuote = await translateToPortuguese(
+                            data.quote,
+                        );
+                        const author = data.author || "Anônimo";
+
+                        return `"${translatedQuote}" — ${author}`;
+                    } catch (error) {
+                        // Fallback com citações motivacionais em português
+                        const motivacoesPortugues = [
+                            '"O sucesso é a soma de pequenos esforços repetidos dia após dia." — Robert Collier',
+                            '"Acredite em si mesmo e chegará um dia em que os outros não terão outra escolha senão acreditar com você." — Cynthia Kersey',
+                            '"A única maneira de fazer um excelente trabalho é amar o que você faz." — Steve Jobs',
+                            '"Não é o mais forte que sobrevive, nem o mais inteligente, mas o que melhor se adapta às mudanças." — Charles Darwin',
+                            '"O futuro pertence àqueles que acreditam na beleza de seus sonhos." — Eleanor Roosevelt',
+                            '"A jornada de mil quilômetros começa com um único passo." — Lao Tzu',
+                            '"Você nunca sabe que resultados virão da sua ação. Mas se você não fizer nada, não existirão resultados." — Mahatma Gandhi',
+                            '"A persistência é o caminho do êxito." — Charles Chaplin',
+                            '"O otimismo é a fé que leva ao sucesso. Nada pode ser feito sem esperança e confiança." — Helen Keller',
+                            '"Seja você mesmo; todos os outros já existem." — Oscar Wilde',
+                            '"A vida é 10% do que acontece com você e 90% de como você reage a isso." — Charles Swindoll',
+                            '"O único impossível é aquilo que não tentamos." — Hellen Keller',
+                        ];
+                        return motivacoesPortugues[
+                            Math.floor(
+                                Math.random() * motivacoesPortugues.length,
+                            )
+                        ];
+                    }
+                }
+
+                // Simple translation function for motivational quotes
+                async function translateToPortuguese(text) {
+                    const commonTranslations = {
+                        "The only way to do great work is to love what you do":
+                            "A única maneira de fazer um excelente trabalho é amar o que você faz",
+                        "Life is what happens to you while you're busy making other plans":
+                            "A vida é o que acontece enquanto você está ocupado fazendo outros planos",
+                        "The future belongs to those who believe in the beauty of their dreams":
+                            "O futuro pertence àqueles que acreditam na beleza de seus sonhos",
+                        "It is during our darkest moments that we must focus to see the light":
+                            "É durante nossos momentos mais sombrios que devemos nos concentrar para ver a luz",
+                        "The way to get started is to quit talking and begin doing":
+                            "A maneira de começar é parar de falar e começar a fazer",
+                        "Don't be afraid to give up the good to go for the great":
+                            "Não tenha medo de abrir mão do bom para buscar o excelente",
+                        "Innovation distinguishes between a leader and a follower":
+                            "A inovação distingue um líder de um seguidor",
+                        "Life is really simple, but we insist on making it complicated":
+                            "A vida é realmente simples, mas insistimos em torná-la complicada",
+                        "Success is not final, failure is not fatal":
+                            "O sucesso não é final, o fracasso não é fatal",
+                        "Believe you can and you're halfway there":
+                            "Acredite que você pode e você já está na metade do caminho",
+                    };
+
+                    // Check for direct translations first
+                    for (const [eng, pt] of Object.entries(
+                        commonTranslations,
+                    )) {
+                        if (text.toLowerCase().includes(eng.toLowerCase())) {
+                            return pt;
+                        }
+                    }
+
+                    // If no translation found, return original text
+                    // In a real app, you might use Google Translate API here
+                    return text;
+                }
+
+                // Portuguese jokes function with more acidic/sarcastic humor
+                function fetchJoke() {
+                    // Collection of more acidic/sarcastic Portuguese jokes
+                    const piadasAcidas = [
+                        "Por que o programador foi ao psicólogo?\nPorque tinha muitos problemas sem solução... igual aos bugs do seu código.",
+                        "Qual a diferença entre um político e um ladrão?\nO ladrão pelo menos tem a dignidade de usar máscara.",
+                        "Por que o Wi-Fi do vizinho sempre funciona melhor?\nPorque a frustração dos outros sempre parece mais interessante que a nossa.",
+                        "Como se chama uma pessoa que trabalha de graça?\nEstagiário... ou idiota. Às vezes é difícil distinguir.",
+                        "Por que as segundas-feiras deveriam ser ilegais?\nPorque é tortura psicológica obrigar as pessoas a fingirem que estão bem.",
+                        "Qual a diferença entre seu chefe e um ditador?\nO ditador pelo menos admite que é um tirano.",
+                        "Por que os influencers nunca morrem de fome?\nPorque se alimentam de atenção e likes... infelizmente isso os mantém vivos.",
+                        "Como se chama alguém que acredita em horóscopo?\nOtimista... ou ingênuo. Depende do ponto de vista.",
+                        "Por que as redes sociais são como o açúcar?\nViciam, fazem mal à saúde e todo mundo sabe, mas continua consumindo.",
+                        "Qual a semelhança entre um meeting e uma tortura medieval?\nOs dois são desnecessários, demoram uma eternidade e ninguém sai ileso.",
+                        "Por que seu smartphone é mais inteligente que você?\nPorque pelo menos ele sabe quando está sem bateria.",
+                        "Como se explica o sucesso das fake news?\nSimples: mentira bem contada sempre vendeu melhor que verdade mal explicada.",
+                        "Por que a vida adulta deveria vir com manual?\nPorque fingir que sabemos o que estamos fazendo está ficando cada vez mais difícil.",
+                        "Qual a diferença entre otimismo e ilusão?\nCerca de 6 meses de realidade.",
+                        "Por que trabalhar de casa virou moda?\nPorque finalmente descobriram que você pode ser improdutivo no conforto do lar.",
+                        "Como se define 'networking'?\nUsar pessoas que você não suporta para conseguir coisas que não precisa.",
+                        "Por que todo mundo é coach hoje em dia?\nPorque é mais fácil dar conselhos da vida dos outros do que arrumar a própria.",
+                        "Qual a semelhança entre dieta e promessa política?\nAmbas começam bem, mas raramente chegam ao fim.",
+                        "Por que os aplicativos de relacionamento são como cassinos?\nVocê sempre perde, mas continua jogando achando que vai ganhar na próxima.",
+                        "Como se chama quem lê os termos e condições?\nNinguém. Literalmente ninguém faz isso.",
+                        "Por que o GPS sempre sabe o caminho mais longo?\nPorque foi programado por alguém que cobra por quilômetro.",
+                        "Qual a diferença entre 'loading' e esperança?\nNenhuma. Ambos prometem algo que pode nunca chegar.",
+                        "Por que todo mundo é especialista em futebol?\nPorque é mais fácil criticar quem está em campo do que descer e jogar.",
+                        "Como se define 'prazo realista'?\nUma mentira que contamos para nós mesmos.",
+                        "Por que as pessoas dizem 'sem ofensa' antes de ofender?\nPorque acham que isso funciona como um escudo mágico anti-processo.",
+                    ];
+
+                    // Return a random acidic joke from the collection
+                    return Promise.resolve(
+                        piadasAcidas[
+                            Math.floor(Math.random() * piadasAcidas.length)
+                        ],
+                    );
+                }
+
+                // Mode switching functions
+                function switchToTimeMode() {
+                    alarmMode = "time";
+                    timeModeBtn.classList.add("bg-white/20", "text-white", "font-medium");
+                    timeModeBtn.classList.remove("text-white/70");
+                    durationModeBtn.classList.remove("bg-white/20", "text-white", "font-medium");
+                    durationModeBtn.classList.add("text-white/70");
+                    
+                    timeModePanel.classList.remove("hidden");
+                    durationModePanel.classList.add("hidden");
+                    
+                    updateWakeTimeStatus();
+                }
+
+                function switchToDurationMode() {
+                    alarmMode = "duration";
+                    durationModeBtn.classList.add("bg-white/20", "text-white", "font-medium");
+                    durationModeBtn.classList.remove("text-white/70");
+                    timeModeBtn.classList.remove("bg-white/20", "text-white", "font-medium");
+                    timeModeBtn.classList.add("text-white/70");
+                    
+                    durationModePanel.classList.remove("hidden");
+                    timeModePanel.classList.add("hidden");
+                    
+                    updateWakeTimeStatus();
+                }
+
+                // Wake time management
+                function updateWakeTimeStatus() {
+                    if (alarmMode === "time") {
+                        const wakeTime = wakeTimeInput.value;
+                        if (wakeTime) {
+                            wakeTimeStatus.textContent = `Alarme definido para ${wakeTime}`;
+                            wakeTimeStatus.classList.add("text-green-300");
+                            wakeTimeStatus.classList.remove("text-white/60");
+                            wakeTimePreview.classList.add("hidden");
+                        } else {
+                            wakeTimeStatus.textContent = "Nenhum alarme definido";
+                            wakeTimeStatus.classList.remove("text-green-300");
+                            wakeTimeStatus.classList.add("text-white/60");
+                            wakeTimePreview.classList.add("hidden");
+                        }
+                    } else {
+                        const hours = parseInt(hoursInput.value) || 0;
+                        const minutes = parseInt(minutesInput.value) || 0;
+                        
+                        if (hours > 0 || minutes > 0) {
+                            wakeTimeStatus.textContent = `Acordar em ${hours}h ${minutes}min`;
+                            wakeTimeStatus.classList.add("text-green-300");
+                            wakeTimeStatus.classList.remove("text-white/60");
+                            
+                            // Calcular e mostrar preview do horário final
+                            const now = new Date();
+                            const futureTime = new Date(now.getTime() + (hours * 60 + minutes) * 60 * 1000);
+                            wakeTimePreview.textContent = `Monitoramento acaba às ${futureTime.toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})}`;
+                            wakeTimePreview.classList.remove("hidden");
+                        } else {
+                            wakeTimeStatus.textContent = "Nenhum alarme definido";
+                            wakeTimeStatus.classList.remove("text-green-300");
+                            wakeTimeStatus.classList.add("text-white/60");
+                            wakeTimePreview.classList.add("hidden");
+                        }
+                    }
+                }
+
+                function checkWakeTime() {
+                    try {
+                        if (!monitoring) return;
+
+                        const now = new Date();
+                        let shouldWakeUp = false;
+                        
+                        if (alarmMode === "time" && wakeTimeInput.value) {
+                            const [hours, minutes] = wakeTimeInput.value.split(":");
+                            const wakeTime = new Date();
+                            wakeTime.setHours(
+                                parseInt(hours),
+                                parseInt(minutes),
+                                0,
+                                0,
+                            );
+
+                            if (now >= wakeTime) {
+                                shouldWakeUp = true;
+                            }
+                        } else if (alarmMode === "duration" && calculatedWakeTime) {
+                            if (now >= calculatedWakeTime) {
+                                shouldWakeUp = true;
+                            }
+                        }
+
+                        if (shouldWakeUp) {
+                            stopMonitoring().catch(console.error);
+                            showNotification(
+                                "⏰ Hora de acordar! Monitoramento finalizado automaticamente.",
+                            );
+                        }
+                    } catch (error) {
+                        console.error(
+                            "Erro ao verificar horário de despertar:",
+                            error,
+                        );
+                    }
+                }
+
+                function showNotification(message) {
+                    if (
+                        "Notification" in window &&
+                        Notification.permission === "granted"
+                    ) {
+                        new Notification("Monitoramento de Sono", {
+                            body: message,
+                        });
+                    }
+                }
+
+                // Request notification permission
+                if (
+                    "Notification" in window &&
+                    Notification.permission === "default"
+                ) {
+                    Notification.requestPermission();
+                }
+
+                // Modal functions
+                function showModal(modal) {
+                    modal.classList.remove("hidden");
+                    modal.classList.add("flex");
+                }
+
+                function hideModal(modal) {
+                    modal.classList.add("hidden");
+                    modal.classList.remove("flex");
+                }
+
+                // Generate detailed summary
+                function generateSummary() {
+                    if (data.length === 0) {
+                        return '<p class="text-gray-600">Nenhum dado coletado durante o monitoramento.</p>';
+                    }
+
+                    const duration = endTime - startTime;
+                    const durationHours = duration / (1000 * 60 * 60);
+                    const durationMinutes = Math.round(
+                        (durationHours % 1) * 60,
+                    );
+
+                    const totalMovements = data.filter(
+                        (d) => d.movement > 0.3,
+                    ).length;
+                    const totalHighSounds = data.filter(
+                        (d) => d.sound > 0.5,
+                    ).length;
+                    const musicDetected = isMusicPresent();
+                    const quality = evaluateSleepQuality(
+                        durationHours,
+                        musicDetected,
+                    );
+
+                    // Sleep phases analysis
+                    let sleepPhases = [];
+                    let currentPhase = null;
+
+                    data.forEach((d, i) => {
+                        const isQuiet = d.movement < 0.2 && d.sound < 0.3;
+
+                        if (isQuiet && !currentPhase) {
+                            currentPhase = { start: i, type: "sono" };
+                        } else if (!isQuiet && currentPhase) {
+                            currentPhase.end = i;
+                            currentPhase.duration =
+                                currentPhase.end - currentPhase.start;
+                            sleepPhases.push(currentPhase);
+                            currentPhase = null;
+                        }
+                    });
+
+                    const longestSleepPhase = sleepPhases.reduce(
+                        (max, phase) =>
+                            phase.duration > (max?.duration || 0) ? phase : max,
+                        null,
+                    );
+
+                    return `
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="bg-blue-50 p-4 rounded-lg">
+                                <h4 class="font-semibold text-blue-800 mb-2">⏱️ Duração Total</h4>
+                                <p class="text-blue-700">${Math.floor(durationHours)}h ${durationMinutes}min</p>
+                            </div>
+
+                            <div class="bg-green-50 p-4 rounded-lg">
+                                <h4 class="font-semibold text-green-800 mb-2">🎯 Qualidade do Sono</h4>
+                                <p class="text-green-700 font-bold">${quality}</p>
+                            </div>
+
+                            <div class="bg-orange-50 p-4 rounded-lg">
+                                <h4 class="font-semibold text-orange-800 mb-2">🏃 Movimentos Detectados</h4>
+                                <p class="text-orange-700">${totalMovements} movimentos significativos</p>
+                            </div>
+
+                            <div class="bg-purple-50 p-4 rounded-lg">
+                                <h4 class="font-semibold text-purple-800 mb-2">🔊 Sons Detectados</h4>
+                                <p class="text-purple-700">${totalHighSounds} sons elevados</p>
+                            </div>
+                        </div>
+
+                        <div class="bg-gray-50 p-4 rounded-lg mt-4">
+                            <h4 class="font-semibold text-gray-800 mb-3">📊 Análise Detalhada</h4>
+                            <div class="space-y-2 text-sm text-gray-700">
+                                <p><strong>Início:</strong> ${startTime.toLocaleString()}</p>
+                                <p><strong>Fim:</strong> ${endTime.toLocaleString()}</p>
+                                <p><strong>Fases de sono detectadas:</strong> ${sleepPhases.length}</p>
+                                ${longestSleepPhase ? `<p><strong>Maior período de sono:</strong> ${Math.round((longestSleepPhase.duration * 5) / 60)} minutos</p>` : ""}
+                                <p><strong>Música ambiente:</strong> ${musicDetected ? "Detectada" : "Não detectada"}</p>
+                                <p><strong>Dados coletados:</strong> ${data.length} amostras</p>
+                            </div>
+                        </div>
+
+                        <div class="bg-indigo-50 p-4 rounded-lg mt-4">
+                            <h4 class="font-semibold text-indigo-800 mb-2">💡 Recomendações</h4>
+                            <div class="text-sm text-indigo-700">
+                                ${
+                                    quality === "Ótimo"
+                                        ? "Excelente! Continue mantendo essa rotina de sono."
+                                        : quality === "Bom"
+                                          ? "Muito bom! Tente reduzir ruídos e movimentos para melhorar ainda mais."
+                                          : quality === "Regular"
+                                            ? "Considere melhorar o ambiente de sono e tentar dormir mais cedo."
+                                            : "Tente estabelecer uma rotina mais consistente e dormir em ambiente mais silencioso."
+                                }
+                            </div>
+                        </div>
+                    `;
+                }
+
+                // Main monitoring functions
+                async function startMonitoring() {
+                    if (monitoring) return;
+                    monitoring = true;
+                    data = [];
+                    startTime = new Date();
+                    endTime = null;
+
+                    updateStatus("Solicitando permissões...", "stopped");
+                    startBtn.disabled = true;
+                    stopBtn.disabled = true;
+
+                    try {
+                        // Inicializar audio e motion separadamente para melhor debug
+                        console.log("Iniciando sensores...");
+                        
+                        try {
+                            await startAudio();
+                            console.log("✓ Áudio iniciado com sucesso");
+                        } catch (audioErr) {
+                            console.error("❌ Erro no áudio:", audioErr);
+                            throw new Error("Microfone: " + audioErr.message);
+                        }
+                        
+                        try {
+                            await startMotion();
+                            console.log("✓ Movimento iniciado com sucesso");
+                        } catch (motionErr) {
+                            console.error("❌ Erro no movimento:", motionErr);
+                            // Movimento é opcional, continuar mesmo com erro
+                            console.log("Continuando apenas com áudio");
+                        }
+                        
+                    } catch (err) {
+                        console.error("Erro ao iniciar sensores:", err);
+                        updateStatus("Erro: " + err.message, "stopped");
+                        startBtn.disabled = false;
+                        stopBtn.disabled = true;
+                        monitoring = false;
+                        return;
+                    }
+
+                    updateStatus("Monitoramento ativo", "active");
+                    startBtn.disabled = true;
+                    stopBtn.disabled = false;
+                    stopBtn.classList.remove("opacity-50");
+
+                    // Calculate wake time and start checking
+                    calculatedWakeTime = null;
+                    if (alarmMode === "duration") {
+                        const hours = parseInt(hoursInput.value) || 0;
+                        const minutes = parseInt(minutesInput.value) || 0;
+                        if (hours > 0 || minutes > 0) {
+                            calculatedWakeTime = new Date(startTime.getTime() + (hours * 60 + minutes) * 60 * 1000);
+                        }
+                    }
+                    
+                    // Start wake time checking if alarm is configured
+                    if ((alarmMode === "time" && wakeTimeInput.value) || 
+                        (alarmMode === "duration" && calculatedWakeTime)) {
+                        wakeTimeInterval = setInterval(checkWakeTime, 60000); // Check every minute
+                    }
+
+                    // Real-time monitoring loop (millisecond updates)
+                    let lastUpdateTime = 0;
+                    let statusUpdateCounter = 0;
+
+                    function realtimeUpdate() {
+                        const now = performance.now();
+
+                        // Collect data every 100ms for real-time response
+                        if (now - lastUpdateTime >= 100) {
+                            const movement = lastAcceleration || 0;
+                            const sound = getSoundLevel();
+                            
+                            data.push({ time: new Date(), movement, sound });
+
+                            // Keep only last 300 points (30 seconds at 100ms intervals)
+                            if (data.length > 300) {
+                                data = data.slice(-300);
+                            }
+
+                            lastUpdateTime = now;
+                            statusUpdateCounter++;
+                        }
+
+                        // Update chart every frame for smooth visualization
+                        drawChart();
+
+                        // Update status less frequently to avoid spam (every 30 frames ≈ 500ms)
+                        if (statusUpdateCounter >= 30) {
+                            if (isSleeping()) {
+                                updateStatus(
+                                    "Usuário provavelmente dormindo",
+                                    "sleeping",
+                                );
+                            } else if (isMusicPresent()) {
+                                updateStatus(
+                                    "Música detectada no ambiente",
+                                    "music",
+                                );
+                            } else {
+                                updateStatus("Usuário ativo", "active");
+                            }
+                            statusUpdateCounter = 0;
+                        }
+
+                        if (monitoring) {
+                            animationFrameId =
+                                requestAnimationFrame(realtimeUpdate);
+                        }
+                    }
+
+                    // Start real-time updates
+                    animationFrameId = requestAnimationFrame(realtimeUpdate);
+                }
+
+                async function stopMonitoring() {
+                    if (!monitoring) return;
+                    monitoring = false;
+                    endTime = new Date();
+
+                    // Cancel animation frame instead of interval
+                    if (animationFrameId) {
+                        cancelAnimationFrame(animationFrameId);
+                        animationFrameId = null;
+                    }
+                    clearInterval(wakeTimeInterval);
+                    stopMotion();
+
+                    if (microphoneStream) {
+                        microphoneStream
+                            .getTracks()
+                            .forEach((track) => track.stop());
+                        microphoneStream = null;
+                    }
+                    if (audioContext) {
+                        try {
+                            await audioContext.close();
+                        } catch (error) {
+                            console.error(
+                                "Erro ao fechar contexto de áudio:",
+                                error,
+                            );
+                        }
+                        audioContext = null;
+                        analyser = null;
+                    }
+
+                    updateStatus("Monitoramento parado", "stopped");
+                    startBtn.disabled = false;
+                    stopBtn.disabled = true;
+                    stopBtn.classList.add("opacity-50");
+
+                    // Calculate session statistics
+                    const sessionStats = calculateSessionStatistics();
+                    
+                    // Save session data to reports
+                    const sessionData = {
+                        startTime: startTime.toISOString(),
+                        endTime: endTime.toISOString(),
+                        duration: endTime - startTime,
+                        movementData: data.map(d => d.movement),
+                        soundData: data.map(d => d.sound),
+                        quality: evaluateSleepQuality((endTime - startTime) / (1000 * 60 * 60), isMusicPresent()),
+                        statistics: sessionStats
+                    };
+                    
+                    saveSleepSession(sessionData);
+                    
+                    // Show summary modal
+                    summaryContent.innerHTML = generateSummary();
+                    showModal(summaryModal);
+                }
+
+                // Event Listeners
+                startBtn.addEventListener("click", startMonitoring);
+                stopBtn.addEventListener("click", stopMonitoring);
+                wakeTimeInput.addEventListener("change", updateWakeTimeStatus);
+                
+                // Alarm mode switching
+                timeModeBtn.addEventListener("click", switchToTimeMode);
+                durationModeBtn.addEventListener("click", switchToDurationMode);
+                
+                // Duration inputs
+                hoursInput.addEventListener("input", updateWakeTimeStatus);
+                minutesInput.addEventListener("input", updateWakeTimeStatus);
+
+                // Modal event listeners
+                motivationBtn.addEventListener("click", async () => {
+                    motivationBtn.disabled = true;
+                    motivationContent.innerHTML =
+                        '<div class="text-center"><i class="fas fa-spinner fa-spin"></i> Buscando mensagem motivacional...</div>';
+                    showModal(motivationModal);
+
+                    setTimeout(async () => {
+                        try {
+                            const message = await fetchMotivation();
+                            motivationContent.innerHTML = message;
+                        } catch (error) {
+                            motivationContent.innerHTML =
+                                "Ops! Algo deu errado ao buscar a motivação. Mas lembre-se: até os erros fazem parte da jornada!";
+                        } finally {
+                            motivationBtn.disabled = false;
+                        }
+                    }, 300);
+                });
+
+                jokeBtn.addEventListener("click", async () => {
+                    jokeBtn.disabled = true;
+                    jokeContent.innerHTML =
+                        '<div class="text-center"><i class="fas fa-spinner fa-spin"></i> Preparando piada...</div>';
+                    showModal(jokeModal);
+
+                    // Small delay for better UX
+                    setTimeout(async () => {
+                        try {
+                            const joke = await fetchJoke();
+                            jokeContent.innerHTML = joke.replace(/\n/g, "<br>");
+                        } catch (error) {
+                            console.error("Erro ao buscar piada:", error);
+                            jokeContent.innerHTML =
+                                "Ops! Algo deu errado. Tente novamente.";
+                        } finally {
+                            jokeBtn.disabled = false;
+                        }
+                    }, 500);
+                });
+
+                closeMotivationBtn.addEventListener("click", () =>
+                    hideModal(motivationModal),
+                );
+                closeJokeBtn.addEventListener("click", () =>
+                    hideModal(jokeModal),
+                );
+                closeSummaryBtn.addEventListener("click", () =>
+                    hideModal(summaryModal),
+                );
+
+                // Close modals when clicking outside
+                [motivationModal, jokeModal, summaryModal].forEach((modal) => {
+                    modal.addEventListener("click", (e) => {
+                        if (e.target === modal) {
+                            hideModal(modal);
+                        }
+                    });
+                });
+
+                // Keyboard shortcuts
+                document.addEventListener("keydown", (e) => {
+                    if (e.key === "Escape") {
+                        hideModal(motivationModal);
+                        hideModal(jokeModal);
+                        hideModal(summaryModal);
+                    }
+                });
+
+                // Inicializar campo de data vazio para mostrar todos os relatórios
+                filterDate.value = '';
+
+                // Tab navigation event listeners
+                monitoringTab.addEventListener("click", () => {
+                    currentTab = "monitoring";
+                    monitoringTab.classList.add("bg-white/20", "text-white", "font-medium");
+                    monitoringTab.classList.remove("text-white/70");
+                    reportsTab.classList.add("text-white/70");
+                    reportsTab.classList.remove("bg-white/20", "text-white", "font-medium");
+                    monitoringPanel.classList.remove("hidden");
+                    reportsPanel.classList.add("hidden");
+                });
+
+                reportsTab.addEventListener("click", () => {
+                    currentTab = "reports";
+                    reportsTab.classList.add("bg-white/20", "text-white", "font-medium");
+                    reportsTab.classList.remove("text-white/70");
+                    monitoringTab.classList.add("text-white/70");
+                    monitoringTab.classList.remove("bg-white/20", "text-white", "font-medium");
+                    reportsPanel.classList.remove("hidden");
+                    monitoringPanel.classList.add("hidden");
+                    updateReportsPanel();
+                });
+
+                // Refresh reports button event listener
+                refreshReportsBtn.addEventListener("click", () => {
+                    console.log('Atualizando lista de relatórios...');
+                    updateReportsPanel();
+                });
+                
+                // Filter date event listener
+                filterDate.addEventListener("change", () => {
+                    updateSavedReportsList();
+                });
+                
+                // Clear filter button event listener
+                clearFilterBtn.addEventListener("click", () => {
+                    filterDate.value = '';
+                    updateSavedReportsList();
+                });
+                
+                // DEBUG: Função para testar manualmente
+                window.debugReports = function() {
+                    console.log('=== DEBUG MANUAL ===');
+                    console.log('localStorage.sleepReports:', localStorage.getItem('sleepReports'));
+                    console.log('sleepReports variable:', sleepReports);
+                    console.log('savedReportsList element:', savedReportsList);
+                    console.log('filterDate value:', filterDate.value);
+                    updateReportsPanel();
+                };
+
+                // Calculate session statistics
+                function calculateSessionStatistics() {
+                    if (data.length === 0) {
+                        return {
+                            avgMovement: 0,
+                            avgSound: 0,
+                            maxMovement: 0,
+                            maxSound: 0,
+                            totalDataPoints: 0,
+                            activePercentage: 0
+                        };
+                    }
+
+                    const movements = data.map(d => d.movement);
+                    const sounds = data.map(d => d.sound);
+                    const activePoints = data.filter(d => d.movement > 0.3 || d.sound > 0.5).length;
+
+                    return {
+                        avgMovement: movements.reduce((sum, val) => sum + val, 0) / movements.length,
+                        avgSound: sounds.reduce((sum, val) => sum + val, 0) / sounds.length,
+                        maxMovement: Math.max(...movements),
+                        maxSound: Math.max(...sounds),
+                        totalDataPoints: data.length,
+                        activePercentage: (activePoints / data.length) * 100
+                    };
+                }
+
+                // Reports Management Functions
+                function saveSleepSession(sessionData) {
+                    const reportData = {
+                        id: Date.now(),
+                        date: new Date().toISOString(),
+                        startTime: sessionData.startTime,
+                        endTime: sessionData.endTime,
+                        duration: sessionData.duration, // duração em milissegundos
+                        movementData: sessionData.movementData,
+                        soundData: sessionData.soundData,
+                        quality: sessionData.quality,
+                        statistics: sessionData.statistics
+                    };
+                    
+                    sleepReports.push(reportData);
+                    localStorage.setItem('sleepReports', JSON.stringify(sleepReports));
+                    
+                    // Salvar no arquivo do projeto
+                    saveToProjectFile(reportData);
+                }
+
+                function updateReportsPanel() {
+                    // DEBUG: Verificar todas as chaves do localStorage
+                    console.log('=== DEBUGGING LOCALSTORAGE ===');
+                    console.log('localStorage keys:', Object.keys(localStorage));
+                    console.log('sleepReports raw:', localStorage.getItem('sleepReports'));
+                    console.log('projectReports raw:', localStorage.getItem('projectReports'));
+                    
+                    // Recarregar dados do localStorage para garantir informações atualizadas
+                    sleepReports = JSON.parse(localStorage.getItem('sleepReports') || '[]');
+                    console.log('sleepReports parsed:', sleepReports);
+                    console.log('Atualizando painel de relatórios. Total:', sleepReports.length);
+                    console.log('Relatórios encontrados:', sleepReports.map(r => ({
+                        id: r.id,
+                        date: new Date(r.date).toLocaleString('pt-BR'),
+                        quality: r.quality
+                    })));
+                    
+                    // DEBUG: Verificar se savedReportsList existe
+                    console.log('savedReportsList element:', savedReportsList);
+                    console.log('savedReportsList innerHTML antes:', savedReportsList.innerHTML);
+                    
+                    updateSavedReportsList();
+                    updateStatistics();
+                    
+                    console.log('savedReportsList innerHTML depois:', savedReportsList.innerHTML);
+                    console.log('=== FIM DEBUG ===');
+                }
+
+                function updateSavedReportsList() {
+                    console.log('=== INÍCIO updateSavedReportsList ===');
+                    console.log('Relatórios disponíveis:', sleepReports.length);
+                    console.log('Valor do filtro de data:', filterDate.value);
+                    console.log('sleepReports array:', sleepReports);
+                    
+                    if (sleepReports.length === 0) {
+                        console.log('Nenhum relatório encontrado - exibindo mensagem padrão');
+                        savedReportsList.innerHTML = '<p class="text-white/60 text-sm">Nenhum relatório salvo ainda</p>';
+                        return;
+                    }
+
+                    // Não aplicar filtro se não houver data selecionada
+                    let filteredReports = sleepReports;
+                    if (filterDate.value && filterDate.value.trim() !== '') {
+                        const selectedDateString = filterDate.value; // Formato YYYY-MM-DD
+                        console.log('Aplicando filtro para data string:', selectedDateString);
+                        
+                        filteredReports = sleepReports.filter(report => {
+                            const reportDate = new Date(report.date);
+                            const reportDateString = reportDate.toISOString().split('T')[0]; // Converter para YYYY-MM-DD
+                            const match = reportDateString === selectedDateString;
+                            console.log(`Filtro: ${reportDateString} === ${selectedDateString} = ${match}`);
+                            return match;
+                        });
+                        
+                        console.log('Relatórios após filtro:', filteredReports.length);
+                    } else {
+                        console.log('Sem filtro aplicado - mostrando todos os relatórios');
+                    }
+
+                    if (filteredReports.length === 0) {
+                        const filterText = filterDate.value ? ` para ${new Date(filterDate.value).toLocaleDateString('pt-BR')}` : '';
+                        console.log('Nenhum relatório após filtro');
+                        savedReportsList.innerHTML = `<p class="text-white/60 text-sm">Nenhum relatório encontrado${filterText}</p>`;
+                        return;
+                    }
+
+                    console.log('Gerando HTML para', filteredReports.length, 'relatórios');
+                    
+                    const htmlContent = filteredReports.map((report, index) => {
+                        console.log(`Processando relatório ${index + 1}:`, {
+                            id: report.id,
+                            date: report.date,
+                            duration: report.duration,
+                            quality: report.quality
+                        });
+                        
+                        const date = new Date(report.date).toLocaleDateString('pt-BR');
+                        const time = new Date(report.date).toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'});
+                        const durationMinutes = Math.round(report.duration / (1000 * 60));
+                        
+                        return `
+                            <div class="bg-white/5 rounded-lg p-3 flex justify-between items-center mb-2">
+                                <div>
+                                    <div class="text-white font-medium">${date} - ${time}</div>
+                                    <div class="text-white/60 text-sm">Duração: ${durationMinutes}min | Qualidade: ${report.quality}</div>
+                                </div>
+                                <div class="flex space-x-2">
+                                    <button onclick="viewReport(${report.id})" class="text-blue-300 hover:text-blue-200 p-1">
+                                        <i class="fas fa-eye"></i>
+                                    </button>
+                                    <button onclick="downloadReportPDF(${report.id})" class="text-green-300 hover:text-green-200 p-1">
+                                        <i class="fas fa-download"></i>
+                                    </button>
+                                    <button onclick="deleteReport(${report.id})" class="text-red-300 hover:text-red-200 p-1">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+                    
+                    console.log('HTML gerado, tamanho:', htmlContent.length);
+                    console.log('HTML content:', htmlContent);
+                    
+                    try {
+                        savedReportsList.innerHTML = htmlContent;
+                        console.log('HTML inserido com sucesso');
+                        console.log('savedReportsList.children:', savedReportsList.children.length);
+                    } catch (error) {
+                        console.error('Erro ao inserir HTML:', error);
+                    }
+                    
+                    console.log('=== FIM updateSavedReportsList ===');
+                }
+
+                function updateStatistics() {
+                    if (sleepReports.length === 0) {
+                        totalSessions.textContent = '0';
+                        avgDuration.textContent = '0min';
+                        avgQuality.textContent = '-';
+                        lastSession.textContent = '-';
+                        return;
+                    }
+
+                    // Calculate statistics (duration em milissegundos)
+                    const totalDuration = sleepReports.reduce((sum, report) => sum + report.duration, 0);
+                    const avgDurationMinutes = Math.round(totalDuration / sleepReports.length / (1000 * 60));
+                    const avgQualityScore = sleepReports.reduce((sum, report) => {
+                        const qualityMap = {'Excelente': 4, 'Boa': 3, 'Regular': 2, 'Ruim': 1};
+                        return sum + (qualityMap[report.quality] || 0);
+                    }, 0) / sleepReports.length;
+                    const qualityLabels = ['Ruim', 'Regular', 'Boa', 'Excelente'];
+                    const lastReport = sleepReports[sleepReports.length - 1];
+
+                    totalSessions.textContent = sleepReports.length;
+                    avgDuration.textContent = `${avgDurationMinutes}min`;
+                    avgQuality.textContent = qualityLabels[Math.round(avgQualityScore - 1)] || '-';
+                    lastSession.textContent = new Date(lastReport.date).toLocaleDateString('pt-BR');
+                }
+
+
+
+                async function saveToProjectFile(reportData) {
+                    try {
+                        // Salvar no arquivo JSON do projeto e no localStorage
+                        const allReports = JSON.parse(localStorage.getItem('projectReports') || '[]');
+                        allReports.push(reportData);
+                        localStorage.setItem('projectReports', JSON.stringify(allReports, null, 2));
+                        
+                        console.log(`✓ Relatório salvo: ID ${reportData.id}`);
+                        console.log(`✓ Duração real: ${Math.round(reportData.duration / (1000 * 60))} minutos`);
+                        console.log(`✓ Dados brutos: ${reportData.movementData.length} pontos de movimento, ${reportData.soundData.length} pontos de som`);
+                        
+                    } catch (error) {
+                        console.error('Erro ao salvar relatório:', error);
+                    }
+                }
+
+                function downloadJSON(data, filename) {
+                    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                }
+
+
+
+                // Global functions for report management
+                window.viewReport = function(reportId) {
+                    const report = sleepReports.find(r => r.id === reportId);
+                    if (report) {
+                        alert(`Relatório de ${new Date(report.date).toLocaleString('pt-BR')}\nDuração: ${Math.round(report.duration/(1000*60))}min\nQualidade: ${report.quality}`);
+                    }
+                };
+
+                window.downloadReportPDF = function(reportId) {
+                    const report = sleepReports.find(r => r.id === reportId);
+                    if (report) {
+                        // Criar PDF usando jsPDF (via CDN)
+                        const { jsPDF } = window.jspdf;
+                        if (typeof jsPDF === 'undefined') {
+                            // Fallback para texto se jsPDF não estiver disponível
+                            alert('Recurso de PDF não disponível. Baixando como texto.');
+                            const reportText = `RELATÓRIO DE SONO - ${new Date(report.date).toLocaleString('pt-BR')}\n=================================================================\nID: ${report.id}\nInício: ${new Date(report.startTime).toLocaleString('pt-BR')}\nFim: ${new Date(report.endTime).toLocaleString('pt-BR')}\nDuração: ${Math.round(report.duration / (1000 * 60))} minutos\nQualidade: ${report.quality}\n\nESTATÍSTICAS:\n- Movimento médio: ${report.statistics?.avgMovement?.toFixed(3) || 'N/A'}\n- Som médio: ${report.statistics?.avgSound?.toFixed(3) || 'N/A'}\n- Total de pontos: ${report.statistics?.totalDataPoints || 'N/A'}`;
+                            
+                            const blob = new Blob([reportText], { type: 'text/plain;charset=utf-8' });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = `relatorio_sono_${new Date(report.date).toISOString().split('T')[0]}_${report.id}.txt`;
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                            URL.revokeObjectURL(url);
+                            return;
+                        }
+                        
+                        // Criar PDF profissional
+                        const doc = new jsPDF();
+                        const dateStr = new Date(report.date).toLocaleString('pt-BR');
+                        
+                        // Cabeçalho
+                        doc.setFontSize(16);
+                        doc.setFont("helvetica", "bold");
+                        doc.text('RELATÓRIO MÉDICO DE SONO', 20, 30);
+                        
+                        doc.setFontSize(10);
+                        doc.setFont("helvetica", "normal");
+                        doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}`, 20, 40);
+                        
+                        // Linha divisória
+                        doc.line(20, 45, 190, 45);
+                        
+                        // Dados da sessão
+                        doc.setFontSize(12);
+                        doc.setFont("helvetica", "bold");
+                        doc.text('DADOS DA SESSÃO:', 20, 55);
+                        
+                        doc.setFont("helvetica", "normal");
+                        doc.text(`Data/Hora: ${dateStr}`, 20, 65);
+                        doc.text(`ID da Sessão: ${report.id}`, 20, 75);
+                        doc.text(`Início: ${new Date(report.startTime).toLocaleString('pt-BR')}`, 20, 85);
+                        doc.text(`Fim: ${new Date(report.endTime).toLocaleString('pt-BR')}`, 20, 95);
+                        doc.text(`Duração: ${Math.round(report.duration / (1000 * 60))} minutos`, 20, 105);
+                        doc.text(`Qualidade do Sono: ${report.quality}`, 20, 115);
+                        
+                        // Estatísticas
+                        doc.setFont("helvetica", "bold");
+                        doc.text('ESTATÍSTICAS DETALHADAS:', 20, 130);
+                        
+                        doc.setFont("helvetica", "normal");
+                        doc.text(`Movimento médio: ${report.statistics?.avgMovement?.toFixed(3) || 'N/A'}`, 20, 140);
+                        doc.text(`Som médio: ${report.statistics?.avgSound?.toFixed(3) || 'N/A'}`, 20, 150);
+                        doc.text(`Movimento máximo: ${report.statistics?.maxMovement?.toFixed(3) || 'N/A'}`, 20, 160);
+                        doc.text(`Som máximo: ${report.statistics?.maxSound?.toFixed(3) || 'N/A'}`, 20, 170);
+                        doc.text(`Total de pontos de dados: ${report.statistics?.totalDataPoints || 'N/A'}`, 20, 180);
+                        doc.text(`Porcentagem ativa: ${report.statistics?.activePercentage?.toFixed(1) || 'N/A'}%`, 20, 190);
+                        
+                        // Rodapé
+                        doc.setFontSize(8);
+                        doc.text('Este relatório foi gerado automaticamente pelo sistema de monitoramento de sono.', 20, 270);
+                        doc.text('Para uso médico profissional.', 20, 275);
+                        
+                        // Salvar PDF
+                        doc.save(`relatorio_medico_sono_${new Date(report.date).toISOString().split('T')[0]}_${report.id}.pdf`);
+                    }
+                };
+
+                window.deleteReport = function(reportId) {
+                    if (confirm('Tem certeza que deseja excluir este relatório?')) {
+                        sleepReports = sleepReports.filter(r => r.id !== reportId);
+                        localStorage.setItem('sleepReports', JSON.stringify(sleepReports));
+                        updateReportsPanel();
+                    }
+                };
+
+                // Initialize wake time status
+                updateWakeTimeStatus();
+            })();
+        </script>
+    </body>
+</html>

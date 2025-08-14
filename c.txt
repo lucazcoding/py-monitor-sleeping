@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Monitoramento de Sono Real + Motivação e Piada</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    max-width: 600px;
+    margin: 30px auto;
+    padding: 0 20px;
+    background: #f0f4f8;
+    color: #333;
+  }
+  h1 {
+    text-align: center;
+    color: #004d99;
+  }
+  button {
+    font-size: 1.1rem;
+    padding: 10px 20px;
+    margin: 10px 5px 20px 5px;
+    cursor: pointer;
+    border: none;
+    border-radius: 6px;
+    background-color: #004d99;
+    color: white;
+    transition: background-color 0.3s;
+  }
+  button:disabled {
+    background-color: #888;
+    cursor: not-allowed;
+  }
+  #status {
+    font-weight: bold;
+    margin-bottom: 10px;
+  }
+  #chart {
+    width: 100%;
+    height: 150px;
+    background: white;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+  }
+  #summary {
+    background: #d0e7ff;
+    padding: 15px;
+    border-radius: 8px;
+    margin-top: 20px;
+  }
+  #summary p {
+    margin: 8px 0;
+  }
+  #motivation {
+    font-style: italic;
+    margin-top: 15px;
+    color: #006600;
+  }
+  #joke {
+    margin-top: 15px;
+    font-weight: bold;
+    color: #990000;
+  }
+</style>
+</head>
+<body>
+
+<h1>Monitoramento de Sono Real</h1>
+
+<div id="status">Status: <span style="color:red;">Monitoramento parado</span></div>
+
+<button id="startBtn">Iniciar Monitoramento</button>
+<button id="stopBtn" disabled>Parar Monitoramento</button>
+
+<canvas id="chart"></canvas>
+
+<div id="summary" style="display:none;"></div>
+
+<script>
+(async () => {
+  const startBtn = document.getElementById('startBtn');
+  const stopBtn = document.getElementById('stopBtn');
+  const statusEl = document.getElementById('status');
+  const summaryEl = document.getElementById('summary');
+  const canvas = document.getElementById('chart');
+  const ctx = canvas.getContext('2d');
+
+  canvas.width = canvas.clientWidth;
+  canvas.height = canvas.clientHeight;
+
+  let monitoring = false;
+  let data = []; // { time: Date, movement: number, sound: number }
+  let startTime = null;
+  let endTime = null;
+
+  let audioContext;
+  let analyser;
+  let microphoneStream;
+
+  // Movimento
+  let lastAcceleration = 0;
+
+  function updateStatus(msg, color = 'black') {
+    statusEl.innerHTML = 'Status: <span style="color:' + color + ';">' + msg + '</span>';
+  }
+
+  function drawChart() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.lineWidth = 2;
+
+    ctx.fillStyle = '#555';
+    ctx.font = '12px Arial';
+    ctx.fillText('Movimento (azul)', 5, 15);
+    ctx.fillText('Som (laranja)', 5, 35);
+
+    if (data.length === 0) return;
+
+    const maxPoints = 60;
+    const slice = data.slice(-maxPoints);
+    const step = canvas.width / maxPoints;
+
+    // Movimento (azul)
+    ctx.strokeStyle = 'blue';
+    ctx.beginPath();
+    slice.forEach((d, i) => {
+      const y = canvas.height - d.movement * canvas.height;
+      const x = i * step;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // Som (laranja)
+    ctx.strokeStyle = 'orange';
+    ctx.beginPath();
+    slice.forEach((d, i) => {
+      const y = canvas.height - d.sound * canvas.height;
+      const x = i * step;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  }
+
+  function calculateMovement(acceleration) {
+    const maxAccel = 30;
+    const norm = Math.min(Math.abs(acceleration) / maxAccel, 1);
+    return norm;
+  }
+
+  async function startAudio() {
+    audioContext = new AudioContext();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      microphoneStream = stream;
+      const source = audioContext.createMediaStreamSource(stream);
+      analyser = audioContext.createAnalyser();
+      analyser.fftSize = 256;
+      source.connect(analyser);
+    } catch (e) {
+      alert('Erro ao acessar microfone: ' + e.message);
+      throw e;
+    }
+  }
+
+  function getSoundLevel() {
+    if (!analyser) return 0;
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    analyser.getByteFrequencyData(dataArray);
+    let values = 0;
+    for (let i = 0; i < dataArray.length; i++) {
+      values += dataArray[i];
+    }
+    const average = values / dataArray.length;
+    return average / 255;
+  }
+
+  function startMotion() {
+    return new Promise((resolve, reject) => {
+      if (typeof DeviceMotionEvent.requestPermission === 'function') {
+        DeviceMotionEvent.requestPermission()
+          .then(response => {
+            if (response === 'granted') {
+              window.addEventListener('devicemotion', motionHandler);
+              resolve();
+            } else {
+              reject(new Error('Permissão para acelerômetro negada'));
+            }
+          })
+          .catch(reject);
+      } else {
+        window.addEventListener('devicemotion', motionHandler);
+        resolve();
+      }
+    });
+  }
+
+  function stopMotion() {
+    window.removeEventListener('devicemotion', motionHandler);
+  }
+
+  function motionHandler(event) {
+    const acc = event.accelerationIncludingGravity;
+    if (!acc) return;
+    const totalAccel = Math.sqrt(
+      (acc.x || 0) ** 2 + (acc.y || 0) ** 2 + (acc.z || 0) ** 2
+    );
+    lastAcceleration = calculateMovement(totalAccel);
+  }
+
+  function isSleeping() {
+    if (data.length < 10) return false;
+    const last10 = data.slice(-10);
+    const lowMovementCount = last10.filter(d => d.movement < 0.2).length;
+    return lowMovementCount >= 8;
+  }
+
+  function isMusicPresent() {
+    if (data.length < 10) return false;
+    const last10 = data.slice(-10);
+    const highSoundCount = last10.filter(d => d.sound > 0.6).length;
+    return highSoundCount >= 3;
+  }
+
+  function evaluateSleepQuality(durationHours, musicDetected) {
+    let quality = '';
+    if (durationHours < 4) quality = 'Péssimo';
+    else if (durationHours < 6) quality = 'Ruim';
+    else if (durationHours < 8) quality = 'Regular';
+    else if (durationHours < 9) quality = 'Bom';
+    else quality = 'Ótimo';
+
+    if (musicDetected && quality !== 'Péssimo' && quality !== 'Ruim') {
+      if (quality === 'Ótimo') quality = 'Bom';
+      else if (quality === 'Bom') quality = 'Regular';
+      else if (quality === 'Regular') quality = 'Ruim';
+    }
+    return quality;
+  }
+
+  function formatDateTime(date) {
+    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+  }
+
+  async function fetchMotivation() {
+    try {
+      const res = await fetch('https://type.fit/api/quotes');
+      const quotes = await res.json();
+      if (!quotes.length) return "Tenha um ótimo dia!";
+      const randomIndex = Math.floor(Math.random() * quotes.length);
+      return quotes[randomIndex].text + (quotes[randomIndex].author ? ' — ' + quotes[randomIndex].author : '');
+    } catch {
+      return "Tenha um ótimo dia!";
+    }
+  }
+
+  async function fetchJoke() {
+  try {
+    const res = await fetch('https://www.piadas.net/api/piadas/random');
+    const data = await res.json();
+    // A API retorna um array com objetos contendo 'piada' em texto
+    if (data && data.length > 0 && data[0].piada) {
+      return data[0].piada;
+    } else {
+      return "Por que o computador foi ao médico? Porque estava com vírus!";
+    }
+  } catch {
+    return "Por que o computador foi ao médico? Porque estava com vírus!";
+  }
+}
+
+  async function startMonitoring() {
+    if (monitoring) return;
+    monitoring = true;
+    data = [];
+    startTime = new Date();
+    endTime = null;
+    summaryEl.style.display = 'none';
+
+    updateStatus('Solicitando permissões...', 'orange');
+    startBtn.disabled = true;
+    stopBtn.disabled = true;
+
+    try {
+      await startAudio();
+      await startMotion();
+    } catch (err) {
+      updateStatus('Permissões negadas ou erro: ' + err.message, 'red');
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      monitoring = false;
+      return;
+    }
+
+    updateStatus('Monitoramento ativo', 'green');
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+
+    intervalId = setInterval(() => {
+      const movement = lastAcceleration || 0;
+      const sound = getSoundLevel();
+      data.push({ time: new Date(), movement, sound });
+      drawChart();
+
+      if (isSleeping()) updateStatus('Usuário provavelmente dormindo', 'green');
+      else updateStatus('Usuário ativo', 'orange');
+
+      if (isMusicPresent()) updateStatus('Música detectada no ambiente', 'blue');
+
+    }, 5000);
+  }
+
+  async function stopMonitoring() {
+    if (!monitoring) return;
+    monitoring = false;
+    endTime = new Date();
+
+    clearInterval(intervalId);
+    stopMotion();
+
+    if (microphoneStream) {
+      microphoneStream.getTracks().forEach(track => track.stop());
+      microphoneStream = null;
+    }
+    if (audioContext) {
+      await audioContext.close();
+      audioContext = null;
+      analyser = null;
+    }
+
+    updateStatus('Monitoramento parado', 'red');
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+
+    if (data.length === 0) {
+      summaryEl.innerHTML = '<p>Nenhum dado coletado.</p>';
+      summaryEl.style.display = 'block';
+      return;
+    }
+
+    let sleepStartIndex = data.findIndex((d, i) => {
+      if (i + 9 >= data.length) return false;
+      const slice = data.slice(i, i + 10);
+      return slice.filter(x => x.movement < 0.2).length >= 8;
+    });
+    if (sleepStartIndex === -1) sleepStartIndex = 0;
+
+    const sleepStartTime = data[sleepStartIndex].time;
+    const sleepDurationMs = endTime - sleepStartTime;
+    const durationHours = sleepDurationMs / (1000 * 60 * 60);
+
+    const musicDuringSleep = data.slice(sleepStartIndex).some(d => d.sound > 0.6);
+    const sleepQuality = evaluateSleepQuality(durationHours, musicDuringSleep);
+
+    // Busca motivação e piada em paralelo
+    const [motivation, joke] = await Promise.all([fetchMotivation(), fetchJoke()]);
+
+    summaryEl.innerHTML = `
+      <p><strong>Início estimado do sono:</strong> ${formatDateTime(sleepStartTime)}</p>
+      <p><strong>Fim do monitoramento:</strong> ${formatDateTime(endTime)}</p>
+      <p><strong>Duração estimada do sono:</strong> ${durationHours.toFixed(2)} horas</p>
+      <p><strong>Música detectada durante o sono:</strong> ${musicDuringSleep ? 'Sim' : 'Não'}</p>
+      <p><strong>Qualidade do sono:</strong> ${sleepQuality}</p>
+      <p><strong>Dicas:</strong></p>
+      <ul>
+        <li>Evite música alta durante o sono para melhorar a qualidade.</li>
+        <li>Mantenha o ambiente silencioso e escuro.</li>
+        <li>Se movimente menos para facilitar um sono profundo.</li>
+        <li>Tente dormir pelo menos 7-8 horas por noite.</li>
+      </ul>
+      <p><strong>Lembre-se:</strong><br><em>${motivation}</em></p>
+      <p><strong>Resenha do dia:</strong><br>${joke}</p>
+    `;
+    summaryEl.style.display = 'block';
+  }
+
+  let intervalId = null;
+
+  startBtn.addEventListener('click', startMonitoring);
+  stopBtn.addEventListener('click', stopMonitoring);
+})();
+</script>
